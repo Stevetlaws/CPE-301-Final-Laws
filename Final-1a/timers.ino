@@ -53,3 +53,43 @@ ISR(TIMER1_OVF_vect)
     overflow_counter = 0; // Reset for the next cycle
   }
 }
+
+// ==========================================
+// TIMER 1 (2-Second Heartbeat Interrupt)
+// ==========================================
+
+volatile unsigned char *my_TCCR1A = (unsigned char *) 0x80;
+volatile unsigned char *my_TCCR1B = (unsigned char *) 0x81;
+volatile unsigned char *my_TCCR1C = (unsigned char *) 0x82;
+volatile unsigned char *my_TIMSK1 = (unsigned char *) 0x6F;
+volatile unsigned int  *my_TCNT1  = (unsigned int *)  0x84;
+
+// Flag to trigger the main loop
+volatile int timer_heartbeat = 0;
+
+void timer1_init() 
+{
+  *my_TCCR1A = 0x00;
+  *my_TCCR1B = 0x00;
+  *my_TCCR1C = 0x00;
+  
+  // Prescaler 1024 (CS12=1, CS11=0, CS10=1 -> 0x05)
+  *my_TCCR1B = 0x05;
+  
+  // Enable Overflow Interrupt
+  *my_TIMSK1 = 0x01;
+  
+  // Preload timer for exactly 2 seconds
+  // 65536 - (16MHz / 1024 * 2s) = 34286 (0x85EE)
+  *my_TCNT1 = 34286; 
+}
+
+// The Interrupt Service Routine
+ISR(TIMER1_OVF_vect) 
+{
+  // 1. Immediately reset the timer to 34286 so the next 2 seconds can start counting
+  *my_TCNT1 = 34286; 
+  
+  // 2. Raise the flag for the main loop
+  timer_heartbeat = 1; 
+}
