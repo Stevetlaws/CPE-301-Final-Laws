@@ -143,33 +143,66 @@ int readWaterLevel() {
   return low_byte + (high_byte * 256);
 }
 
-// --- DHT11 ---
+// --- DHT11 (Interrupt-Protected Version) ---
 void read_DHT11() {
   unsigned char dht_data[5] = {0, 0, 0, 0, 0};
-  *myDDRB |= 0x40; 
-  *myPORTB &= 0xBF;
-  for (volatile long i = 0; i < 30000; i++) {} 
-  *myPORTB |= 0x40;
-  
-  *myDDRB &= 0xBF; 
   int timeout = 0;
-  while ((*myPINB & 0x40) != 0) { timeout++; if(timeout > 10000) return; }
-  timeout = 0; while ((*myPINB & 0x40) == 0) { timeout++; if(timeout > 10000) return; }
-  timeout = 0; while ((*myPINB & 0x40) != 0) { timeout++; if(timeout > 10000) return; }
-
-  for (int i = 0; i < 5; i++) {
-    for (int j = 7; j >= 0; j--) {
-      timeout = 0; while ((*myPINB & 0x40) == 0) { timeout++; if(timeout > 10000) return; }
+  
+  // DISABLE GLOBAL INTERRUPTS so background timers don't ruin our counting
+  asm("cli");
+  
+  // STEP 1: WAKE UP SENSOR 
+  *myDDRB |= 0x40;  
+  *myPORTB &= 0xBF; 
+  for (volatile long i = 0; i < 100000; i++); 
+  *myPORTB |= 0x40; 
+  *myDDRB &= 0xBF;  
+  
+  // STEP 2: WAIT FOR ACKNOWLEDGE
+  while ((*myPINB & 0x40) != 0) { if(++timeout > 30000) { asm("sei"); return; } }
+  timeout = 0; 
+  while ((*myPINB & 0x40) == 0) { if(++timeout > 30000) { asm("sei"); return; } }
+  timeout = 0; 
+  while ((*myPINB & 0x40) != 0) { if(++timeout > 30000) { asm("sei"); return; } }
+  
+  // STEP 3: READ THE 40 BITS
+  for (int byte_idx = 0; byte_idx < 5; byte_idx++) {
+    for (int bit_idx = 7; bit_idx >= 0; bit_idx--) {
+      timeout = 0; 
+      while ((*myPINB & 0x40) == 0) { if(++timeout > 30000) { asm("sei"); return; } }
+      
       int pulse_length = 0;
       while ((*myPINB & 0x40) != 0) {
         pulse_length++;
-        if(pulse_length > 10000) return; 
+        if(pulse_length > 30000) { asm("sei"); return; } 
       }
-      if (pulse_length > 40) dht_data[i] |= (1 << j);
+      if (pulse_length > 100) dht_data[byte_idx] |= (1 << bit_idx); 
     }
   }
-  if (dht_data[0] + dht_data[1] + dht_data[2] + dht_data[3] == dht_data[4]) {
-     current_humidity = dht_data[0]; current_temp = dht_data[2]; 
+
+  // ENABLE GLOBAL INTERRUPTS AGAIN
+  asm("sei");
+
+// ENABLE GLOBAL INTERRUPTS AGAIN
+  asm("sei");
+
+  // =======================================
+  // STEP 4: VERIFY CHECKSUM & DIAGNOSE
+  // =======================================
+  
+  // PRINT THE RAW BYTES TO SEE THE NOISE
+  Serial.print(">> RAW DHT DATA: ");
+  Serial.print(dht_data[0]); Serial.print(" ");
+  Serial.print(dht_data[1]); Serial.print(" ");
+  Serial.print(dht_data[2]); Serial.print(" ");
+  Serial.print(dht_data[3]); Serial.print(" ");
+  Serial.println(dht_data[4]);
+
+  if ((dht_data[0] + dht_data[1] + dht_data[2] + dht_data[3]) == dht_data[4]) {
+     current_humidity = dht_data[0]; 
+     current_temp = dht_data[2]; 
+  } else {
+     Serial.println(">> DHT11 FAULT: Checksum failed!");
   }
 }
 
